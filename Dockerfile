@@ -18,8 +18,8 @@ COPY prompts/ ./prompts/
 # Create uploads directory
 RUN mkdir -p uploads
 
-# Expose port 4000
-EXPOSE 4000
+# Expose port 8000
+EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "4000"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
