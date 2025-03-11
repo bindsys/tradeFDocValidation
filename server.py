@@ -11,11 +11,20 @@ from typing import List
 import json
 from cachetools import TTLCache
 import tempfile
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="PDF Processing API",
-    description="API for processing PDF documents",
+    title="Trade Finance API",
+    description=(
+        "API to accept at least one PDF file (mandatory) and optionally a second file, "
+        "then process them with detailed verification checks. Performs a series of verification "
+        "checks and returns a JSON report detailing the results and a risk rating (Red/Amber/Green)."
+    ),
     version="1.0.0"
 )
 
@@ -31,11 +40,6 @@ app.add_middleware(
 # Initialize cache with 5-day TTL (in seconds)
 cache = TTLCache(maxsize=100, ttl=432000)
 
-# Load Swagger YAML file
-with open('swagger.yaml', 'r') as file:
-    swagger_doc = yaml.safe_load(file)
-app.openapi_schema = swagger_doc
-
 async def get_file_hash(file_path: str) -> str:
     """Generate SHA-256 hash of a file."""
     hash_sha256 = hashlib.sha256()
@@ -50,6 +54,7 @@ async def load_prompt(prompt_file: str) -> str:
         async with aiofiles.open(prompt_file, 'r') as f:
             return await f.read()
     except FileNotFoundError:
+        logger.error(f"Prompt file '{prompt_file}' not found")
         raise HTTPException(
             status_code=500,
             detail=f"Prompt file '{prompt_file}' not found"
@@ -58,13 +63,18 @@ async def load_prompt(prompt_file: str) -> str:
 @app.post("/process-pdfs")
 async def process_pdfs(files: List[UploadFile] = File(...)):
     """
-    Process uploaded PDF files and return analysis results.
+    Accepts at least one PDF file (mandatory) and optionally a second file.
+    Performs a series of verification checks and returns a JSON report detailing the results
+    and a risk rating (Red/Amber/Green).
     """
     try:
+        logger.info("Received request to process PDFs")
         # Validate number of files
         if len(files) < 1:
+            logger.warning("No files uploaded")
             raise HTTPException(status_code=400, detail="Please upload at least one PDF file.")
         if len(files) > 2:
+            logger.warning("Too many files uploaded")
             raise HTTPException(status_code=400, detail="You can upload up to 2 PDF files only.")
 
         # Load prompt from file
@@ -80,13 +90,14 @@ async def process_pdfs(files: List[UploadFile] = File(...)):
                     content = await file.read()
                     await f.write(content)
                 file_paths.append(file_path)
+                logger.info(f"Saved file: {file.filename}")
 
             # Generate cache key
             cache_key = '-'.join([await get_file_hash(path) for path in file_paths])
 
             # Check cache
             if cache_key in cache:
-                print('Returning cached response')
+                logger.info("Returning cached response")
                 return JSONResponse(content=cache[cache_key])
 
             # Prepare files for API request
@@ -100,6 +111,7 @@ async def process_pdfs(files: List[UploadFile] = File(...)):
                         open(file_path, 'rb'),
                         filename=os.path.basename(file_path)
                     )
+                logger.info("Sending request to external API")
 
                 # Make API request
                 async with session.post(
@@ -108,7 +120,6 @@ async def process_pdfs(files: List[UploadFile] = File(...)):
                     headers={'accept': 'application/json'}
                 ) as response:
                     response_data = await response.json()
-
             # Process response
             response_text = response_data.get('response_text', response_data)
             
@@ -119,9 +130,11 @@ async def process_pdfs(files: List[UploadFile] = File(...)):
                 
                 # Cache the response
                 cache[cache_key] = json_response
+                logger.info("Successfully processed PDFs and cached response")
                 
                 return JSONResponse(content=json_response)
             except json.JSONDecodeError as e:
+                logger.error("Invalid JSON format from API response")
                 return JSONResponse(
                     content={
                         "error": "Invalid JSON format from API",
@@ -130,13 +143,5 @@ async def process_pdfs(files: List[UploadFile] = File(...)):
                 )
 
     except Exception as e:
+        logger.error(f"Error processing PDFs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api-docs")
-async def get_docs():
-    """Serve Swagger UI documentation."""
-    return get_swagger_ui_html(openapi_url="/openapi.json", title="API Documentation")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
