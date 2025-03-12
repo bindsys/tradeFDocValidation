@@ -1,25 +1,19 @@
-# Use Python 3.9 slim image as base
-FROM python:3.9-slim
+FROM python:3.10-slim
 
-# Set working directory in container
+RUN apt-get update && apt-get install ffmpeg libsm6 libxext6 poppler-utils -y
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+# Copy the requirements file into the container
+COPY requirements.txt ./
 
-# Install dependencies
+# Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
-COPY server.py .
-COPY swagger.yaml .
-COPY prompts/ ./prompts/
+# Copy the current directory contents into the container at /app
+COPY . /app
 
-# Create uploads directory
-RUN mkdir -p uploads
+EXPOSE 8000
 
-# Expose port 8000
-EXPOSE 8080
-
-# Command to run the application
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+# Run the FastAPI application using Uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
